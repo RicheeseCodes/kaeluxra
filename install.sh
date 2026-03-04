@@ -7,7 +7,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 APP_LABEL="Kaeluxra"
-APP_ZIP_URL="https://raw.githubusercontent.com/tp-handler/luna/main/Kaeluxra.zip"
+APP_ZIP_URL="https://raw.githubusercontent.com/RicheeseCodes/kaeluxra/main/Kaeluxra.zip"
 
 TEMP_DIR=$(mktemp -d)
 TARGET_DIR="/Applications"
