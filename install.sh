@@ -6,7 +6,8 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-LUNA="https://raw.githubusercontent.com/tp-handler/luna/main/Luna.zip"
+APP_LABEL="Kaeluxra"
+APP_ZIP_URL="https://raw.githubusercontent.com/tp-handler/luna/main/Kaeluxra.zip"
 
 TEMP_DIR=$(mktemp -d)
 TARGET_DIR="/Applications"
@@ -51,23 +52,23 @@ main() {
         echo -e "${YELLOW}Local user detected (no global write access). Installing to: $TARGET_DIR${NC}${NC}"
     fi
 
-    curl -fsSL "$LUNA" -o "$TEMP_DIR/Luna.zip" &
-    spinner "Downloading Luna"
+    curl -fsSL "$APP_ZIP_URL" -o "$TEMP_DIR/Kaeluxra.zip" &
+    spinner "Downloading $APP_LABEL"
 
-    if ! unzip -tq "$TEMP_DIR/Luna.zip" > /dev/null 2>&1; then
+    if ! unzip -tq "$TEMP_DIR/Kaeluxra.zip" > /dev/null 2>&1; then
          echo -e "\n${RED}[✘] Critical Error: Downloaded file is not a valid ZIP.${NC}"
          rm -rf "$TEMP_DIR"
          exit 1
     fi
 
-    unzip -oq "$TEMP_DIR/Luna.zip" -d "$TEMP_DIR" &
+    unzip -oq "$TEMP_DIR/Kaeluxra.zip" -d "$TEMP_DIR" &
     spinner "Unzipping archive"
 
     APP_PATH=$(find "$TEMP_DIR" -maxdepth 1 -type d -name "*.app" | head -n 1)
 
     if [[ -z "$APP_PATH" ]]; then
         echo -e "\n${RED}[✘] Error: No .app bundle found inside the ZIP archive.${NC}"
-        echo -e "${YELLOW}Make sure you zipped the folder 'LunaOWO.app', not just the binary.${NC}"
+        echo -e "${YELLOW}Make sure you zipped the folder 'Kaeluxra.app', not just the binary.${NC}"
         rm -rf "$TEMP_DIR"
         exit 1
     fi
