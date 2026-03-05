@@ -250,7 +250,6 @@ import pathlib
 import subprocess
 import sys
 import time
-import tkinter as tk
 import urllib.error
 import urllib.request
 import webbrowser
@@ -338,73 +337,80 @@ def start_expiry_timer(seconds_remaining):
     )
     subprocess.Popen(["/bin/bash", "-c", cmd], start_new_session=True)
 
-class KeyWindow:
-    def __init__(self):
-        self.root = tk.Tk()
-        self.root.title("Kaeluxra Key System")
-        self.root.geometry("470x230")
-        self.root.resizable(False, False)
-        self.success = False
+def _escape_applescript_text(value):
+    return str(value).replace("\\", "\\\\").replace("\"", "\\\"")
 
-        frame = tk.Frame(self.root, padx=16, pady=16)
-        frame.pack(fill="both", expand=True)
+def _run_osascript(lines):
+    cmd = ["osascript"]
+    for line in lines:
+        cmd.extend(["-e", line])
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
-        tk.Label(frame, text="Kaeluxra Key Verification", font=("Arial", 14, "bold")).pack(anchor="w")
-        tk.Label(frame, text="Enter key to open Roblox").pack(anchor="w", pady=(10, 4))
+def show_message(message, title="Kaeluxra Key System"):
+    esc_title = _escape_applescript_text(title)
+    esc_message = _escape_applescript_text(message)
+    _run_osascript(
+        [
+            f'display dialog "{esc_message}" with title "{esc_title}" buttons {{"OK"}} default button "OK"',
+        ]
+    )
 
-        self.key_entry = tk.Entry(frame, width=54)
-        self.key_entry.pack(fill="x")
-        self.key_entry.focus_set()
+def prompt_key_dialog():
+    lines = [
+        'set d to display dialog "Enter key to open Roblox" with title "Kaeluxra Key System" default answer "" buttons {"Cancel", "Get Key", "Submit Key"} default button "Submit Key" cancel button "Cancel"',
+        'set b to button returned of d',
+        'set t to text returned of d',
+        'return b & linefeed & t',
+    ]
+    code, out, _ = _run_osascript(lines)
+    if code != 0:
+        return None, None
+    if "\n" in out:
+        button, key_text = out.split("\n", 1)
+    else:
+        button, key_text = out, ""
+    return button.strip(), key_text.strip()
 
-        self.status = tk.StringVar(value="Key required to continue.")
-        tk.Label(frame, textvariable=self.status, fg="#666666", wraplength=430, justify="left").pack(anchor="w", pady=(12, 10))
+def run_key_flow():
+    while True:
+        button, key_text = prompt_key_dialog()
+        if not button:
+            return False
 
-        btn_row = tk.Frame(frame)
-        btn_row.pack(anchor="w")
-        tk.Button(btn_row, text="Submit Key", width=14, command=self.on_submit).pack(side="left", padx=(0, 8))
-        tk.Button(btn_row, text="Get Key", width=14, command=self.on_get_key).pack(side="left", padx=(0, 8))
-        tk.Button(btn_row, text="Cancel", width=14, command=self.on_cancel).pack(side="left")
+        if button == "Cancel":
+            return False
 
-    def on_submit(self):
-        value = self.key_entry.get().strip()
-        if not value:
-            self.status.set("Please enter key.")
-            return
+        if button == "Get Key":
+            if not ensure_local_keysystem_running():
+                show_message("Local keysystem server is not running.")
+            else:
+                webbrowser.open(KEY_SITE_A_URL, new=2)
+            continue
+
+        if button != "Submit Key":
+            return False
+
+        if not key_text:
+            show_message("Please enter key.")
+            continue
+
         if not ensure_local_keysystem_running():
-            self.status.set("Local keysystem server is not running.")
-            return
-        self.status.set("Checking key...")
-        self.root.update_idletasks()
+            show_message("Local keysystem server is not running.")
+            continue
 
-        result = validate_key(value)
+        result = validate_key(key_text)
         if not result.get("valid"):
-            self.status.set(f"Invalid key: {result.get('reason', 'Unknown error')}")
-            return
+            show_message(f"Invalid key: {result.get('reason', 'Unknown error')}")
+            continue
 
         start_expiry_timer(result.get("seconds_remaining"))
         if AUTO_OPEN_ROBLOX_ON_SUCCESS:
             subprocess.Popen(["open", "-a", ROBLOX_APP_NAME])
-        self.success = True
-        self.root.destroy()
-
-    def on_get_key(self):
-        if not ensure_local_keysystem_running():
-            self.status.set("Local keysystem server is not running.")
-            return
-        webbrowser.open(KEY_SITE_A_URL, new=2)
-        self.status.set("Opened key website.")
-
-    def on_cancel(self):
-        self.success = False
-        self.root.destroy()
-
-    def run(self):
-        self.root.mainloop()
-        return self.success
+        return True
 
 if __name__ == "__main__":
-    ui = KeyWindow()
-    ok = ui.run()
+    ok = run_key_flow()
     sys.exit(0 if ok else 1)
 PYEOF
     chmod 755 "$gate_script"
