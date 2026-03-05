@@ -13,6 +13,7 @@ KEYSYS_PORT="5055"
 KEY_SITE_A_URL="http://127.0.0.1:${KEYSYS_PORT}/site-a"
 KEY_VALIDATE_API_URL="http://127.0.0.1:${KEYSYS_PORT}/api/client/validate-key"
 ROBLOX_DOWNLOAD_PAGE_URL="https://www.roblox.com/download/client?os=mac"
+KEYSYS_ADMIN_PASSWORD="${KEYSYS_ADMIN_PASSWORD:-Light@83}"
 
 TEMP_DIR=$(mktemp -d)
 TARGET_DIR="/Applications"
@@ -132,6 +133,62 @@ install_or_update_local_keysystem() {
 
     "$venv_pip" install -q -r "$keysystem_target/requirements.txt"
     "$venv_python" -m py_compile "$keysystem_target/app.py"
+}
+
+configure_keysystem_launch_agent() {
+    local launch_agents_dir plist_path logs_dir keysys_dir python_bin
+
+    launch_agents_dir="$HOME/Library/LaunchAgents"
+    logs_dir="$HOME/Library/Logs"
+    plist_path="$launch_agents_dir/com.kaeluxra.keysystem.plist"
+    keysys_dir="$INSTALL_PATH/Contents/Resources/keysystem"
+    python_bin="$keysys_dir/.venv/bin/python3"
+
+    mkdir -p "$launch_agents_dir" "$logs_dir"
+
+    cat > "$plist_path" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.kaeluxra.keysystem</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>$python_bin</string>
+        <string>$keysys_dir/app.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>$keysys_dir</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>KEYSYS_HOST</key>
+        <string>127.0.0.1</string>
+        <key>KEYSYS_PORT</key>
+        <string>$KEYSYS_PORT</string>
+        <key>KEYSYS_ADMIN_PASSWORD</key>
+        <string>$KEYSYS_ADMIN_PASSWORD</string>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>$logs_dir/KaeluxraKeysystem.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>$logs_dir/KaeluxraKeysystem.err.log</string>
+</dict>
+</plist>
+EOF
+
+    launchctl unload "$plist_path" >/dev/null 2>&1 || true
+    launchctl load -w "$plist_path"
 }
 
 integrate_key_gate_into_kaeluxra() {
@@ -417,6 +474,11 @@ main() {
     spinner "Installing Local Keysystem Server"
 
     (
+        configure_keysystem_launch_agent
+    ) &
+    spinner "Configuring Local Keysystem Auto-Start"
+
+    (
         integrate_key_gate_into_kaeluxra "$INSTALL_PATH"
     ) &
     spinner "Injecting Key-Gate Into Kaeluxra"
@@ -450,6 +512,8 @@ EOF
     echo -e "${CYAN}Installed to: $INSTALL_PATH${NC}"
     echo -e "${CYAN}Roblox path: /Applications/Roblox.app or ~/Applications/Roblox.app${NC}"
     echo -e "${CYAN}Local Keysystem URL: http://127.0.0.1:${KEYSYS_PORT}/site-a${NC}"
+    echo -e "${CYAN}Admin panel: http://127.0.0.1:${KEYSYS_PORT}/site-c${NC}"
+    echo -e "${CYAN}LaunchAgent: ~/Library/LaunchAgents/com.kaeluxra.keysystem.plist${NC}"
 }
 
 main
