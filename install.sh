@@ -8,8 +8,10 @@ NC='\033[0m'
 
 APP_LABEL="Kaeluxra"
 APP_ZIP_URL="https://raw.githubusercontent.com/RicheeseCodes/kaeluxra/main/Kaeluxra.zip"
-KEY_SITE_A_URL="https://your-domain.tld/site-a"
-KEY_VALIDATE_API_URL="https://your-domain.tld/api/client/validate-key"
+KEYSYS_REPO_TARBALL_URL="https://codeload.github.com/RicheeseCodes/kaeluxra/tar.gz/refs/heads/main"
+KEYSYS_PORT="5055"
+KEY_SITE_A_URL="http://127.0.0.1:${KEYSYS_PORT}/site-a"
+KEY_VALIDATE_API_URL="http://127.0.0.1:${KEYSYS_PORT}/api/client/validate-key"
 ROBLOX_DOWNLOAD_PAGE_URL="https://www.roblox.com/download/client?os=mac"
 
 TEMP_DIR=$(mktemp -d)
@@ -104,6 +106,34 @@ install_or_update_roblox() {
     fi
 }
 
+install_or_update_local_keysystem() {
+    local tarball repo_extract_dir keysystem_source keysystem_target venv_python venv_pip
+
+    tarball="$TEMP_DIR/kaeluxra_repo.tar.gz"
+    repo_extract_dir="$TEMP_DIR/repo_src"
+    keysystem_target="$INSTALL_PATH/Contents/Resources/keysystem"
+
+    curl -fsSL "$KEYSYS_REPO_TARBALL_URL" -o "$tarball"
+    mkdir -p "$repo_extract_dir"
+    tar -xzf "$tarball" -C "$repo_extract_dir"
+
+    keysystem_source=$(find "$repo_extract_dir" -maxdepth 2 -type d -name "keysystem" | head -n 1)
+    if [[ -z "$keysystem_source" ]]; then
+        echo -e "\n${RED}[✘] Local keysystem folder not found in repository tarball.${NC}"
+        return 1
+    fi
+
+    mkdir -p "$keysystem_target"
+    rsync -a --delete "$keysystem_source/" "$keysystem_target/"
+
+    python3 -m venv "$keysystem_target/.venv"
+    venv_python="$keysystem_target/.venv/bin/python3"
+    venv_pip="$keysystem_target/.venv/bin/pip"
+
+    "$venv_pip" install -q -r "$keysystem_target/requirements.txt"
+    "$venv_python" -m py_compile "$keysystem_target/app.py"
+}
+
 integrate_key_gate_into_kaeluxra() {
     local app_path="$1"
     local macos_dir resources_dir keygate_dir executable_name executable_path real_binary gate_script
@@ -126,17 +156,66 @@ integrate_key_gate_into_kaeluxra() {
 #!/usr/bin/env python3
 import json
 import os
+import pathlib
 import subprocess
 import sys
+import time
 import tkinter as tk
 import urllib.error
 import urllib.request
 import webbrowser
 
-KEY_SITE_A_URL = os.environ.get("KEY_SITE_A_URL", "https://your-domain.tld/site-a")
-KEY_VALIDATE_API_URL = os.environ.get("KEY_VALIDATE_API_URL", "https://your-domain.tld/api/client/validate-key")
+KEYSYS_PORT = os.environ.get("KEYSYS_PORT", "5055")
+KEYSYS_DIR = pathlib.Path(os.environ.get("KEYSYS_DIR", "")).expanduser()
+if not str(KEYSYS_DIR):
+    KEYSYS_DIR = pathlib.Path(__file__).resolve().parent.parent / "keysystem"
+
+KEY_SITE_A_URL = os.environ.get("KEY_SITE_A_URL", f"http://127.0.0.1:{KEYSYS_PORT}/site-a")
+KEY_VALIDATE_API_URL = os.environ.get(
+    "KEY_VALIDATE_API_URL",
+    f"http://127.0.0.1:{KEYSYS_PORT}/api/client/validate-key",
+)
 ROBLOX_APP_NAME = os.environ.get("ROBLOX_APP_NAME", "Roblox")
 KAELUXRA_APP_NAME = os.environ.get("KAELUXRA_APP_NAME", "Kaeluxra")
+
+def keysys_health_ok():
+    health_url = f"http://127.0.0.1:{KEYSYS_PORT}/health"
+    try:
+        with urllib.request.urlopen(health_url, timeout=2) as response:
+            return response.status == 200
+    except Exception:
+        return False
+
+def ensure_local_keysystem_running():
+    if keysys_health_ok():
+        return True
+
+    app_py = KEYSYS_DIR / "app.py"
+    if not app_py.exists():
+        return False
+
+    venv_py = KEYSYS_DIR / ".venv" / "bin" / "python3"
+    python_exec = str(venv_py if venv_py.exists() else pathlib.Path(sys.executable))
+
+    env = os.environ.copy()
+    env["KEYSYS_HOST"] = "127.0.0.1"
+    env["KEYSYS_PORT"] = KEYSYS_PORT
+    env["KEYSYS_ADMIN_PASSWORD"] = env.get("KEYSYS_ADMIN_PASSWORD", "Light@83")
+
+    subprocess.Popen(
+        [python_exec, str(app_py)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+        cwd=str(KEYSYS_DIR),
+        env=env,
+    )
+
+    for _ in range(30):
+        if keysys_health_ok():
+            return True
+        time.sleep(0.2)
+    return False
 
 def validate_key(key_value):
     payload = json.dumps({"key": key_value}).encode("utf-8")
@@ -199,6 +278,9 @@ class KeyWindow:
         if not value:
             self.status.set("Please enter key.")
             return
+        if not ensure_local_keysystem_running():
+            self.status.set("Local keysystem server is not running.")
+            return
         self.status.set("Checking key...")
         self.root.update_idletasks()
 
@@ -213,6 +295,9 @@ class KeyWindow:
         self.root.destroy()
 
     def on_get_key(self):
+        if not ensure_local_keysystem_running():
+            self.status.set("Local keysystem server is not running.")
+            return
         webbrowser.open(KEY_SITE_A_URL, new=2)
         self.status.set("Opened key website.")
 
@@ -249,10 +334,12 @@ EXECUTABLE_NAME="$(basename "$0")"
 REAL_BIN="$SCRIPT_DIR/${EXECUTABLE_NAME}.real"
 GATE_SCRIPT="$APP_CONTENTS_DIR/Resources/keygate/roblox_key_gate.py"
 
-export KEY_SITE_A_URL="${KEY_SITE_A_URL:-https://your-domain.tld/site-a}"
-export KEY_VALIDATE_API_URL="${KEY_VALIDATE_API_URL:-https://your-domain.tld/api/client/validate-key}"
 export ROBLOX_APP_NAME="${ROBLOX_APP_NAME:-Roblox}"
 export KAELUXRA_APP_NAME="${KAELUXRA_APP_NAME:-Kaeluxra}"
+export KEYSYS_PORT="${KEYSYS_PORT:-5055}"
+export KEYSYS_DIR="${KEYSYS_DIR:-$APP_CONTENTS_DIR/Resources/keysystem}"
+export KEY_SITE_A_URL="${KEY_SITE_A_URL:-http://127.0.0.1:${KEYSYS_PORT}/site-a}"
+export KEY_VALIDATE_API_URL="${KEY_VALIDATE_API_URL:-http://127.0.0.1:${KEYSYS_PORT}/api/client/validate-key}"
 
 if [[ ! -f "$REAL_BIN" ]]; then
   echo "Missing real app binary: $REAL_BIN" >&2
@@ -325,6 +412,11 @@ main() {
     spinner "Installing/Updating Roblox"
 
     (
+        install_or_update_local_keysystem
+    ) &
+    spinner "Installing Local Keysystem Server"
+
+    (
         integrate_key_gate_into_kaeluxra "$INSTALL_PATH"
     ) &
     spinner "Injecting Key-Gate Into Kaeluxra"
@@ -356,8 +448,8 @@ EOF
     rm -rf "$TEMP_DIR"
     echo -e "\n${GREEN}✨ Success!${NC}"
     echo -e "${CYAN}Installed to: $INSTALL_PATH${NC}"
-    echo -e "${CYAN}Roblox path: /Applications/Roblox.app${NC}"
-    echo -e "${YELLOW}Set KEY_SITE_A_URL and KEY_VALIDATE_API_URL in this installer before release.${NC}"
+    echo -e "${CYAN}Roblox path: /Applications/Roblox.app or ~/Applications/Roblox.app${NC}"
+    echo -e "${CYAN}Local Keysystem URL: http://127.0.0.1:${KEYSYS_PORT}/site-a${NC}"
 }
 
 main
