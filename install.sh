@@ -43,7 +43,7 @@ spinner() {
 }
 
 install_or_update_roblox() {
-    local roblox_url roblox_dmg attach_output mount_point roblox_app
+    local roblox_url roblox_dmg attach_output mount_point installer_app roblox_final_path
     roblox_url=$(
         curl -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" \
              -sSL -o /dev/null -w "%{url_effective}" "$ROBLOX_DOWNLOAD_PAGE_URL"
@@ -60,26 +60,48 @@ install_or_update_roblox() {
     attach_output=$(hdiutil attach "$roblox_dmg" -nobrowse)
     mount_point=$(echo "$attach_output" | awk 'END {for (i=3; i<=NF; i++) printf (i==3 ? $i : " " $i); print ""}')
 
-    roblox_app=$(find "$mount_point" -maxdepth 2 -type d -name "Roblox.app" | head -n 1)
-    if [[ -z "$roblox_app" ]]; then
-        roblox_app=$(find "$mount_point" -maxdepth 2 -type d -name "*.app" | head -n 1)
+    installer_app=$(find "$mount_point" -maxdepth 2 -type d -name "RobloxPlayerInstaller.app" | head -n 1)
+    if [[ -z "$installer_app" ]]; then
+        installer_app=$(find "$mount_point" -maxdepth 2 -type d -name "*.app" | head -n 1)
     fi
 
-    if [[ -z "$roblox_app" ]]; then
+    if [[ -z "$installer_app" ]]; then
         hdiutil detach "$mount_point" -quiet || true
-        echo -e "\n${RED}[✘] Roblox.app not found in mounted DMG.${NC}"
+        echo -e "\n${RED}[✘] Roblox installer app not found in mounted DMG.${NC}"
         return 1
     fi
 
-    if [[ -d "/Applications/Roblox.app" ]]; then
-        rsync -a --delete "$roblox_app/" "/Applications/Roblox.app/"
+    if [[ -d "/Applications/RobloxPlayerInstaller.app" ]]; then
+        rsync -a --delete "$installer_app/" "/Applications/RobloxPlayerInstaller.app/"
     else
-        cp -R "$roblox_app" "/Applications/"
+        cp -R "$installer_app" "/Applications/"
     fi
 
     hdiutil detach "$mount_point" -quiet || true
-    xattr -cr "/Applications/Roblox.app" || true
-    codesign --force --deep --sign - "/Applications/Roblox.app" >/dev/null 2>&1 || true
+
+    # Trigger installer app to install/update Roblox.app.
+    open -gj "/Applications/RobloxPlayerInstaller.app" || true
+
+    roblox_final_path=""
+    for _ in {1..60}; do
+        if [[ -d "/Applications/Roblox.app" ]]; then
+            roblox_final_path="/Applications/Roblox.app"
+            break
+        fi
+        if [[ -d "$HOME/Applications/Roblox.app" ]]; then
+            roblox_final_path="$HOME/Applications/Roblox.app"
+            break
+        fi
+        sleep 1
+    done
+
+    if [[ -n "$roblox_final_path" ]]; then
+        xattr -cr "$roblox_final_path" || true
+        codesign --force --deep --sign - "$roblox_final_path" >/dev/null 2>&1 || true
+    else
+        echo -e "${YELLOW}[!] Roblox installer launched, but Roblox.app path not detected yet.${NC}"
+        echo -e "${YELLOW}[!] Complete installer UI if prompted by macOS.${NC}"
+    fi
 }
 
 integrate_key_gate_into_kaeluxra() {
