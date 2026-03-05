@@ -47,6 +47,7 @@ spinner() {
 
 install_or_update_roblox() {
     local roblox_url roblox_dmg attach_output mount_point installer_app roblox_final_path
+    local roblox_exec exec_path stable_count m1 m2
     roblox_url=$(
         curl -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15" \
              -sSL -o /dev/null -w "%{url_effective}" "$ROBLOX_DOWNLOAD_PAGE_URL"
@@ -85,6 +86,14 @@ install_or_update_roblox() {
     # Trigger installer app to install/update Roblox.app.
     open -gj "/Applications/RobloxPlayerInstaller.app" || true
 
+    # Wait for installer process to finish so later wrapper injection is not overwritten.
+    for _ in {1..120}; do
+        if ! pgrep -if "RobloxPlayerInstaller" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+
     roblox_final_path=""
     for _ in {1..60}; do
         if [[ -d "/Applications/Roblox.app" ]]; then
@@ -99,6 +108,30 @@ install_or_update_roblox() {
     done
 
     if [[ -n "$roblox_final_path" ]]; then
+        roblox_exec=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$roblox_final_path/Contents/Info.plist" 2>/dev/null || true)
+        if [[ -z "$roblox_exec" ]]; then
+            roblox_exec="RobloxPlayer"
+        fi
+        exec_path="$roblox_final_path/Contents/MacOS/$roblox_exec"
+        stable_count=0
+        for _ in {1..20}; do
+            if [[ ! -f "$exec_path" ]]; then
+                sleep 1
+                continue
+            fi
+            m1=$(stat -f "%m" "$exec_path" 2>/dev/null || echo 0)
+            sleep 1
+            m2=$(stat -f "%m" "$exec_path" 2>/dev/null || echo 1)
+            if [[ "$m1" == "$m2" ]]; then
+                stable_count=$((stable_count + 1))
+            else
+                stable_count=0
+            fi
+            if [[ $stable_count -ge 2 ]]; then
+                break
+            fi
+        done
+
         xattr -cr "$roblox_final_path" || true
         codesign --force --deep --sign - "$roblox_final_path" >/dev/null 2>&1 || true
     else
@@ -223,6 +256,8 @@ import urllib.request
 import webbrowser
 
 KEYSYS_PORT = os.environ.get("KEYSYS_PORT", "5055")
+KEY_GATE_MODE = os.environ.get("KEY_GATE_MODE", "kaeluxra").strip().lower()
+AUTO_OPEN_ROBLOX_ON_SUCCESS = KEY_GATE_MODE != "roblox"
 KEYSYS_DIR = pathlib.Path(os.environ.get("KEYSYS_DIR", "")).expanduser()
 if not str(KEYSYS_DIR):
     KEYSYS_DIR = pathlib.Path(__file__).resolve().parent.parent / "keysystem"
@@ -347,7 +382,8 @@ class KeyWindow:
             return
 
         start_expiry_timer(result.get("seconds_remaining"))
-        subprocess.Popen(["open", "-a", ROBLOX_APP_NAME])
+        if AUTO_OPEN_ROBLOX_ON_SUCCESS:
+            subprocess.Popen(["open", "-a", ROBLOX_APP_NAME])
         self.success = True
         self.root.destroy()
 
@@ -411,6 +447,87 @@ exec "$REAL_BIN" "$@"
 SHEOF
     chmod 755 "$executable_path"
     xattr -cr "$app_path"
+}
+
+integrate_key_gate_into_roblox() {
+    local roblox_app_path executable_name macos_dir resources_dir executable_path real_binary
+    local gate_dir gate_script source_gate
+
+    if [[ -d "/Applications/Roblox.app" ]]; then
+        roblox_app_path="/Applications/Roblox.app"
+    elif [[ -d "$HOME/Applications/Roblox.app" ]]; then
+        roblox_app_path="$HOME/Applications/Roblox.app"
+    else
+        echo -e "${YELLOW}[!] Roblox.app was not found; skipping direct Roblox key-gate integration.${NC}"
+        return 0
+    fi
+
+    executable_name=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$roblox_app_path/Contents/Info.plist" 2>/dev/null || true)
+    if [[ -z "$executable_name" ]]; then
+        executable_name="RobloxPlayer"
+    fi
+
+    macos_dir="$roblox_app_path/Contents/MacOS"
+    resources_dir="$roblox_app_path/Contents/Resources"
+    executable_path="$macos_dir/$executable_name"
+    real_binary="$macos_dir/${executable_name}.real"
+    gate_dir="$resources_dir/keygate"
+    gate_script="$gate_dir/roblox_key_gate.py"
+    source_gate="$INSTALL_PATH/Contents/Resources/keygate/roblox_key_gate.py"
+
+    mkdir -p "$gate_dir"
+    if [[ -f "$source_gate" ]]; then
+        cp "$source_gate" "$gate_script"
+        chmod 755 "$gate_script"
+    else
+        echo -e "${YELLOW}[!] Kaeluxra key-gate script missing; Roblox key-gate not injected.${NC}"
+        return 1
+    fi
+
+    if [[ -f "$executable_path" && ! -f "$real_binary" ]]; then
+        mv "$executable_path" "$real_binary"
+    fi
+
+    if [[ ! -f "$real_binary" ]]; then
+        echo -e "\n${RED}[✘] Could not find Roblox original executable for key-gate integration.${NC}"
+        return 1
+    fi
+
+    cat > "$executable_path" <<'SHEOF'
+#!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_CONTENTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+EXECUTABLE_NAME="$(basename "$0")"
+REAL_BIN="$SCRIPT_DIR/${EXECUTABLE_NAME}.real"
+GATE_SCRIPT="$APP_CONTENTS_DIR/Resources/keygate/roblox_key_gate.py"
+
+export KEY_GATE_MODE="${KEY_GATE_MODE:-roblox}"
+export ROBLOX_APP_NAME="${ROBLOX_APP_NAME:-Roblox}"
+export KAELUXRA_APP_NAME="${KAELUXRA_APP_NAME:-Kaeluxra}"
+export KEYSYS_PORT="${KEYSYS_PORT:-5055}"
+export KEYSYS_DIR="${KEYSYS_DIR:-/Applications/Kaeluxra.app/Contents/Resources/keysystem}"
+if [[ ! -d "$KEYSYS_DIR" && -d "$HOME/Applications/Kaeluxra.app/Contents/Resources/keysystem" ]]; then
+  export KEYSYS_DIR="$HOME/Applications/Kaeluxra.app/Contents/Resources/keysystem"
+fi
+export KEY_SITE_A_URL="${KEY_SITE_A_URL:-http://127.0.0.1:${KEYSYS_PORT}/site-a}"
+export KEY_VALIDATE_API_URL="${KEY_VALIDATE_API_URL:-http://127.0.0.1:${KEYSYS_PORT}/api/client/validate-key}"
+
+if [[ ! -f "$REAL_BIN" ]]; then
+  echo "Missing real Roblox binary: $REAL_BIN" >&2
+  exit 1
+fi
+
+if [[ -f "$GATE_SCRIPT" ]]; then
+  python3 "$GATE_SCRIPT" || exit 0
+fi
+
+exec "$REAL_BIN" "$@"
+SHEOF
+
+    chmod 755 "$executable_path"
+    xattr -cr "$roblox_app_path"
+    codesign --force --deep --sign - "$roblox_app_path" >/dev/null 2>&1 || true
 }
 
 main() {
@@ -482,6 +599,11 @@ main() {
         integrate_key_gate_into_kaeluxra "$INSTALL_PATH"
     ) &
     spinner "Injecting Key-Gate Into Kaeluxra"
+
+    (
+        integrate_key_gate_into_roblox
+    ) &
+    spinner "Injecting Key-Gate Into Roblox"
 
     cat > "$ENTITLEMENTS_FILE" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
