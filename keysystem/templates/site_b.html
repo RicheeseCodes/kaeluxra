@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Website B - Generate Key{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>Website B - Generate Key</h1>
+  <p class="muted">
+    This key expires in <strong>6 hours</strong>. You can generate a new key every
+    <strong>{{ cooldown_seconds // 60 }} minutes</strong>.
+  </p>
+
+  <button id="generateBtn" class="btn primary">Generate Key</button>
+
+  <div id="result" class="result hidden">
+    <h3>Your Key</h3>
+    <code id="keyValue"></code>
+    <p id="expiryText" class="muted"></p>
+  </div>
+
+  <p id="statusText" class="muted"></p>
+</section>
+
+<script>
+  const generateBtn = document.getElementById("generateBtn");
+  const statusText = document.getElementById("statusText");
+  const result = document.getElementById("result");
+  const keyValue = document.getElementById("keyValue");
+  const expiryText = document.getElementById("expiryText");
+
+  async function requestKey() {
+    generateBtn.disabled = true;
+    statusText.textContent = "Generating key...";
+
+    try {
+      const res = await fetch("/api/generate-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        statusText.textContent = data.error || "Failed to generate key.";
+        result.classList.add("hidden");
+        return;
+      }
+
+      keyValue.textContent = data.key;
+      expiryText.textContent = `Expires: ${data.expires_at_utc}`;
+      result.classList.remove("hidden");
+      statusText.textContent = "Key generated successfully.";
+    } catch (err) {
+      statusText.textContent = "Server error while generating key.";
+      result.classList.add("hidden");
+    } finally {
+      generateBtn.disabled = false;
+    }
+  }
+
+  generateBtn.addEventListener("click", requestKey);
+</script>
+{% endblock %}

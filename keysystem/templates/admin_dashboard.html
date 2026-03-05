@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block title %}Website C - Admin Panel{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="row-between">
+    <div>
+      <h1>Website C - Admin Panel</h1>
+      <p class="muted">Server time: {{ now_utc }}</p>
+    </div>
+    <form method="post" action="{{ url_for('site_c_logout') }}">
+      <button class="btn danger" type="submit">Log Out</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>1) Active Keys (currently working)</h2>
+  <p class="muted">You can expire or restore keys here.</p>
+  {% if active_keys %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Type</th>
+            <th>Remaining</th>
+            <th>Expires At</th>
+            <th>Last Seen</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in active_keys %}
+            <tr>
+              <td><code>{{ item.key_value }}</code></td>
+              <td>{{ item.key_type }}</td>
+              <td>{{ item.remaining }}</td>
+              <td>{{ item.expires_at_utc }}</td>
+              <td>{{ item.last_seen_at_utc }}</td>
+              <td class="actions">
+                <form method="post" action="{{ url_for('admin_expire_key', key_id=item.id) }}">
+                  <button class="btn danger" type="submit">Expire</button>
+                </form>
+                <form method="post" action="{{ url_for('admin_restore_key', key_id=item.id) }}">
+                  <button class="btn" type="submit">Restore</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">No active keys right now.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>2) Toggle Website A / Website B</h2>
+  <div class="grid-two">
+    <form method="post" action="{{ url_for('admin_toggle_site_a') }}" class="card">
+      <h3>Website A</h3>
+      <p class="muted">Current: <strong>{{ "ON" if site_a_enabled else "OFF" }}</strong></p>
+      <label class="checkline">
+        <input type="checkbox" name="enabled" value="1" {% if site_a_enabled %}checked{% endif %}>
+        Enabled
+      </label>
+      <button class="btn primary" type="submit">Save Website A</button>
+    </form>
+
+    <form method="post" action="{{ url_for('admin_toggle_site_b') }}" class="card">
+      <h3>Website B</h3>
+      <p class="muted">Current: <strong>{{ "ON" if site_b_enabled else "OFF" }}</strong></p>
+      <label class="checkline">
+        <input type="checkbox" name="enabled" value="1" {% if site_b_enabled %}checked{% endif %}>
+        Enabled
+      </label>
+      <button class="btn primary" type="submit">Save Website B</button>
+    </form>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>3) Force Expire All Keys At Once / Activate Again</h2>
+  <form method="post" action="{{ url_for('admin_toggle_all_keys_pause') }}" class="card">
+    <p class="muted">
+      Current global state:
+      <strong>{{ "ALL KEYS DISABLED" if all_keys_paused else "NORMAL" }}</strong>
+    </p>
+    <label class="checkline">
+      <input type="checkbox" name="enabled" value="1" {% if all_keys_paused %}checked{% endif %}>
+      Force all keys to be invalid
+    </label>
+    <button class="btn warning" type="submit">Apply Global Key State</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>4) VIP Key Management</h2>
+  <div class="card">
+    <h3>Create VIP Key</h3>
+    <form method="post" action="{{ url_for('admin_create_vip_key') }}" class="stack">
+      <label>Custom Key (optional)</label>
+      <input class="input" type="text" name="custom_key" placeholder="VIP-XXXX-XXXX-XXXX">
+
+      <label>Set Expiry by Hours (optional)</label>
+      <input class="input" type="number" name="expires_in_hours" step="0.5" min="0.5" placeholder="e.g. 24">
+
+      <label>Or Set Exact Expiry UTC (optional)</label>
+      <input class="input" type="datetime-local" name="expires_at_datetime">
+
+      <button class="btn primary" type="submit">Create VIP Key</button>
+    </form>
+  </div>
+
+  {% if vip_keys %}
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>VIP Key</th>
+            <th>Status</th>
+            <th>Remaining</th>
+            <th>Expires At</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in vip_keys %}
+            <tr>
+              <td><code>{{ item.key_value }}</code></td>
+              <td>{{ "Expired/Revoked" if item.revoked else "Active" }}</td>
+              <td>{{ item.remaining }}</td>
+              <td>{{ item.expires_at_utc }}</td>
+              <td class="actions">
+                <form method="post" action="{{ url_for('admin_expire_key', key_id=item.id) }}">
+                  <button class="btn danger" type="submit">Expire</button>
+                </form>
+                <form method="post" action="{{ url_for('admin_restore_key', key_id=item.id) }}">
+                  <button class="btn" type="submit">Restore</button>
+                </form>
+                <form method="post" action="{{ url_for('admin_set_vip_expiry', key_id=item.id) }}" class="inline-form">
+                  <input class="input tiny" type="number" name="expires_in_hours" min="0.5" step="0.5" placeholder="hours">
+                  <input class="input tiny" type="datetime-local" name="expires_at_datetime">
+                  <button class="btn" type="submit">Set Expiry</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">No VIP keys yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
